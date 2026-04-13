@@ -1,0 +1,104 @@
+import boto3
+from botocore.exceptions import ClientError
+import logging
+import os
+import paramiko
+
+# ========== CONFIGURATION ==========
+logging.basicConfig(level=logging.INFO)
+
+aws_bucket = 'oro-data'
+aws_access_key = 'AKIEM'
+aws_secret_key = 'mUGeDnPCti/9EljBjBiO'
+credentials = dict(service_name="s3", aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
+
+# SFTP config
+sftp_host = "34.206.232.131"
+sftp_port = 22
+sftp_user = "ino"
+sftp_pass = "in18#"
+sftp_remote_path = "/data/PratishthaChaturvedi"
+
+# Local temp folder
+local_temp_dir = '/tmp/cigmber_transfer'
+os.makedirs(local_temp_dir, exist_ok=True)
+# ===================================
+
+
+def list_s3_files(s3_client, bucket_name, prefix):
+    """Return a list of all S3 object keys under the prefix."""
+    keys = []
+    paginator = s3_client.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix):
+        for obj in page.get('Contents', []):
+            key = obj['Key']
+            if not key.endswith('/'):
+                keys.append(key)
+    return keys
+
+
+def download_from_s3(s3_client, bucket_name, s3_key, local_path):
+    try:
+        logging.info(f"Downloading s3://{bucket_name}/{s3_key} to {local_path}")
+        s3_client.download_file(bucket_name, s3_key, local_path)
+        logging.info("Download completed.")
+        print('Download Completed')
+        print(local_path)
+        return local_path
+    except ClientError as e:
+        logging.error(f"S3 download failed for {s3_key}: {e}")
+        print('Download Not Completed')
+        raise
+
+
+def upload_to_sftp(local_file_path, remote_path):
+    try:
+        logging.info(f"Connecting to SFTP {sftp_host}:{sftp_port}")
+        transport = paramiko.Transport((sftp_host, sftp_port))
+        transport.connect(username=sftp_user, password=sftp_pass)
+        sftp = paramiko.SFTPClient.from_transport(transport)
+
+        remote_file_path = os.path.join(remote_path, os.path.basename(local_file_path))
+        print('Local file path:')
+        print(local_file_path)
+        logging.info(f"Uploading {local_file_path} to SFTP: {remote_file_path}")
+        sftp.put(local_file_path, remote_file_path)
+
+        logging.info("Upload completed.")
+        sftp.close()
+        transport.close()
+    except Exception as e:
+        logging.error(f"SFTP upload failed for {local_file_path}: {e}")
+        raise
+
+
+def s3_to_sftp_transfer(s3_client, bucket_name, source_prefix, sftp_remote_path):
+    """List all files in S3 source prefix, download and upload to SFTP."""
+    print('List s3 files function before execution')
+    files = list_s3_files(s3_client, bucket_name, source_prefix)
+    print('Lsit s3 files function afetr execution')
+    logging.info(f"Found {len(files)} file(s) to transfer from S3.")
+
+    for s3_key in files:
+        local_file_path = os.path.join(local_temp_dir, os.path.basename(s3_key))
+        try:
+            download_from_s3(s3_client, bucket_name, s3_key, local_file_path)
+            upload_to_sftp(local_file_path, sftp_remote_path)
+        except Exception as e:
+            logging.error(f"Failed to transfer {s3_key}: {e}")
+
+
+class Runner(object):
+    @staticmethod
+    def runner(file_object):
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key
+        )
+
+        source_prefix = 'ARB_Report_2025_19/'  # All files under this prefix will be transferred
+        s3_to_sftp_transfer(s3_client, aws_bucket, source_prefix, sftp_remote_path)
+
+        for line in file_object.readlines():
+            yield line
