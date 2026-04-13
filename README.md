@@ -301,7 +301,7 @@ for line in file_object.readlines():
 
 # ⚠️ IMPORTANT ISSUE (VERY IMPORTANT 🚨)
 
-Your code has **security risks**:
+This code has **security risks**:
 
 ```python
 aws_access_key = 'AKIEM'
